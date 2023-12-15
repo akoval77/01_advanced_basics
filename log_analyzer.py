@@ -15,6 +15,7 @@ import logging
 import gzip
 import argparse
 import configparser
+import itertools
 
 config = {
     "REPORT_SIZE": 1000,
@@ -92,11 +93,14 @@ def parse_log(source, error_limit):
 
 
 def render_report(parsed, report_path, report_size):
-    stats = dict()
-    for rec in parsed:
-        if stats.get(rec['url']) is None:
-            stat = {''}
-            stats[rec['url']] = float(rec['request_time'])
+    url_stats = itertools.groupby(sorted(parsed, key = lambda x: x['url']), key=lambda x: x['url'])
+    print(len(url_stats))
+
+    # stats = dict()
+    # for rec in parsed:
+    #     if stats.get(rec['url']) is None:
+    #         stat = {''}
+    #         stats[rec['url']] = float(rec['request_time'])
 
 
 def process_log(config: dict, log: Log):
@@ -125,7 +129,7 @@ def process_log(config: dict, log: Log):
     finally:
         source.close()
 
-    # print(report_name)
+
 
 
 def configure(config_path, config):
@@ -136,6 +140,7 @@ def configure(config_path, config):
         print(f"Configuration file read error: {e}")
         exit(1)
 
+    # update configuration from config file
     if 'config' in config_parser:
         config_section = config_parser['config']
         config["REPORT_SIZE"] = config_section.getint("REPORT_SIZE", config["REPORT_SIZE"])
@@ -143,7 +148,7 @@ def configure(config_path, config):
         config["LOG_DIR"] = config_section.get("LOG_DIR", config["LOG_DIR"])
         config["ERROR_LIMIT"] = config_section.getfloat("ERROR_LIMIT", config["ERROR_LIMIT"])
 
-    # logging configuration
+    # setup logging configuration
     logging_filename = None
     logging_level = logging.INFO
 
@@ -188,7 +193,12 @@ def main():
         logging.info(f'Start log analyzer')
         log = get_log(config)
         logging.debug(f'log = {log}')
-        process_log(config, log)
+
+        if log is not None:
+            process_log(config, log)
+        else:
+            logging.info(f'No logs found')
+
         logging.info(f'Log analyzer successfully completed')
     except Exception as e:
         print(f'Log analyzer stopped with error: {e}')
