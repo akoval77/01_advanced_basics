@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
-
+import statistics
 # log_format ui_short '$remote_addr  $remote_user $http_x_real_ip [$time_local] "$request" '
 #                     '$status $body_bytes_sent "$http_referer" '
 #                     '"$http_user_agent" "$http_x_forwarded_for" "$http_X_REQUEST_ID" "$http_X_RB_USER" '
@@ -42,10 +41,10 @@ def get_log(config: dict) -> Log:
         return None
 
     files = (
-                Log(name=f, date=dt, ext=m.groupdict()["ext"]) for f in listdir(log_dir)
-                if (m := re.match(r'nginx-access-ui.log-(?P<logdate>[0-9]{8})(?P<ext>\.gz)?', f))
-                and (dt := to_date(m.groupdict()['logdate'])) is not None
-            )
+        Log(name=f, date=dt, ext=m.groupdict()["ext"]) for f in listdir(log_dir)
+        if (m := re.match(r'nginx-access-ui.log-(?P<logdate>[0-9]{8})(?P<ext>\.gz)?', f))
+           and (dt := to_date(m.groupdict()['logdate'])) is not None
+    )
 
     return max(files, default=None, key=lambda x: x.date)
 
@@ -88,19 +87,46 @@ def parse_log(source, error_limit):
     logging.debug(f"parsed_cnt: {parsed_cnt}")
     logging.debug(f"error_cnt: {error_cnt}")
 
-    if error_cnt > 0 and (pcnt := error_cnt/total_cnt) > error_limit:
+    if error_cnt > 0 and (pcnt := error_cnt / total_cnt) > error_limit:
         raise Exception(f"Too many parse errors. Error percent: {pcnt}")
 
 
 def render_report(parsed, report_path, report_size):
-    url_stats = itertools.groupby(sorted(parsed, key = lambda x: x['url']), key=lambda x: x['url'])
-    print(len(url_stats))
+    logging.debug("Start grouping")
+    urls = itertools.groupby(sorted(parsed, key=lambda x: x['url']), key=lambda x: x['url'])
+    logging.debug("Finish grouping")
 
-    # stats = dict()
-    # for rec in parsed:
-    #     if stats.get(rec['url']) is None:
-    #         stat = {''}
-    #         stats[rec['url']] = float(rec['request_time'])
+    logging.debug("Process groups")
+    url_groups = {url: [float(x['request_time']) for x in url_requests] for url, url_requests in urls}
+
+    logging.debug("Calculate group stats")
+    url_stats = [
+        {
+            "url": url,
+            "count": len(times),
+            "time_sum": sum(times),
+            "time_max": max(times),
+            "time_avg": statistics.mean(times),
+            "time_med": statistics.median(times),
+        }
+        for url, times in url_groups.items()
+    ]
+
+    # calculate totals
+    logging.debug("Calculate totals")
+    total_time = sum(x['time_sum'] for x in url_stats)
+    total_count = sum(x['count'] for x in url_stats)
+
+    logging.debug(f"Total time: {total_time}")
+    logging.debug(f"Total count: {total_count}")
+
+    url_stats = sorted(url_stats, key=lambda x: x['time_sum'], reverse=True)[:report_size]
+    logging.debug(f"Size of url stat: {len(url_stats)}")
+
+    # write top 10 items of url_stats to log
+    logging.debug("Top 10 urls:")
+    for i in range(10):
+        logging.debug(f"{url_stats[i]}")
 
 
 def process_log(config: dict, log: Log):
@@ -128,8 +154,6 @@ def process_log(config: dict, log: Log):
 
     finally:
         source.close()
-
-
 
 
 def configure(config_path, config):
@@ -165,6 +189,7 @@ def configure(config_path, config):
                         level=logging_level,
                         format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S')
+
 
 def main():
     # parse command line arguments
