@@ -6,7 +6,7 @@ import statistics
 #                     '"$http_user_agent" "$http_x_forwarded_for" "$http_X_REQUEST_ID" "$http_X_RB_USER" '
 #                     '$request_time';
 
-from os import listdir, path
+from os import listdir, path, makedirs
 from datetime import datetime
 from collections import namedtuple
 import re
@@ -15,13 +15,14 @@ import gzip
 import argparse
 import configparser
 import itertools
+from string import Template
+import json
 
 config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
     "ERROR_LIMIT": 0.5,
-
 }
 
 Log = namedtuple('Log', 'name date ext')
@@ -34,8 +35,7 @@ def to_date(s: str) -> datetime:
         return None
 
 
-def get_log(config: dict) -> Log:
-    log_dir = config["LOG_DIR"]
+def get_log(log_dir) -> Log:
 
     if not path.isdir(log_dir):
         return None
@@ -50,21 +50,10 @@ def get_log(config: dict) -> Log:
 
 
 def parse_log(source, error_limit):
-    # log_format = re.compile(b'(?P<remote_addr>\S+) (?P<remote_user>\S+)  (?P<http_x_real_ip>\S+) '\
-    #     b'(?P<time_local>\[.+?\]) "(?P<method>\S+) (?P<url>\S+) (?P<http>\S+)" ' \
-    #     b'(?P<status>\d+) (?P<body_bytes_sent>\d+) "(?P<http_referer>.+?)" ' \
-    #     b'"(?P<http_user_agent>.+?)" "(?P<http_x_forwarded_for>.+?)" ' \
-    #     b'"(?P<http_X_REQUEST_ID>.+?)" "(?P<http_X_RB_USER>.+?)" (?P<request_time>\S+)')
-
-    # log_format = re.compile(b'(?:\S+) (?:\S+)  (?:\S+) ' \
-    #                         b'(?:\[.+?\]) "(?:\S+) (?P<url>\S+) (?:\S+)" ' \
-    #                         b'(?P<status>\d+) (?P<body_bytes_sent>\d+) "(?:.+?)" ' \
-    #                         b'"(?:.+?)" "(?:.+?)" ' \
-    #                         b'"(?:.+?)" "(?:.+?)" (?P<request_time>\S+)')
 
     log_format = re.compile(r'(?:\S+) (?:\S+)  (?:\S+) ' \
                             r'(?:\[.+?\]) "(?:\S+) (?P<url>\S+) (?:\S+)" ' \
-                            r'(?P<status>\d+) (?P<body_bytes_sent>\d+) "(?:.+?)" ' \
+                            r'(?:\d+) (?:\d+) "(?:.+?)" ' \
                             r'"(?:.+?)" "(?:.+?)" ' \
                             r'"(?:.+?)" "(?:.+?)" (?P<request_time>\S+)')
 
@@ -91,7 +80,13 @@ def parse_log(source, error_limit):
         raise Exception(f"Too many parse errors. Error percent: {pcnt}")
 
 
-def render_report(parsed, report_path, report_size):
+def save_report(url_stats, report_path, report_template):
+    template = Template(report_template)
+    with open(report_path, mode='w', encoding='windows-1251') as report:
+        report.write(template.safe_substitute(table_json=json.dumps(url_stats)))
+
+
+def render_report(parsed, report_size):
     logging.debug("Start grouping")
     urls = itertools.groupby(sorted(parsed, key=lambda x: x['url']), key=lambda x: x['url'])
     logging.debug("Finish grouping")
@@ -102,11 +97,11 @@ def render_report(parsed, report_path, report_size):
     logging.debug("Calculate group stats")
     url_stats = [
         {
-            "url": url,
             "count": len(times),
-            "time_sum": sum(times),
-            "time_max": max(times),
             "time_avg": statistics.mean(times),
+            "time_max": max(times),
+            "time_sum": sum(times),
+            "url": url,
             "time_med": statistics.median(times),
         }
         for url, times in url_groups.items()
@@ -123,13 +118,22 @@ def render_report(parsed, report_path, report_size):
     url_stats = sorted(url_stats, key=lambda x: x['time_sum'], reverse=True)[:report_size]
     logging.debug(f"Size of url stat: {len(url_stats)}")
 
+    for url_stat in url_stats:
+        url_stat["time_avg"] = round(url_stat["time_avg"], 3)
+        url_stat["time_med"] = round(url_stat["time_med"], 3)
+        url_stat["time_sum"] = round(url_stat["time_sum"], 3)
+        url_stat["time_perc"] = round((url_stat["time_sum"]/total_time)*100, 3)
+        url_stat["count_perc"] = round((url_stat["count"]/total_count)*100, 3)
+
     # write top 10 items of url_stats to log
     logging.debug("Top 10 urls:")
     for i in range(10):
         logging.debug(f"{url_stats[i]}")
 
+    return url_stats
 
-def process_log(config: dict, log: Log):
+
+def process_log(config: dict, log: Log, report_template: str):
     report_name = "report-" + datetime.strftime(log.date, "%Y.%m.%d") + ".html"
     report_dir = config["REPORT_DIR"]
     logging.info(f"Start processing log {log.name}")
@@ -139,6 +143,8 @@ def process_log(config: dict, log: Log):
         logging.info(f'Report {report_path} already exists.')
         return
 
+    if not path.exists(report_dir):
+        makedirs(report_dir)
     log_path = path.join(config["LOG_DIR"], log.name)
 
     source = gzip.open(log_path, mode='rt', encoding='windows-1251') if log.ext == '.gz' \
@@ -150,7 +156,9 @@ def process_log(config: dict, log: Log):
         parsed = parse_log(source, config["ERROR_LIMIT"])
         logging.debug(parsed)
 
-        render_report(parsed, report_path, config["REPORT_SIZE"])
+        stats = render_report(parsed, config["REPORT_SIZE"])
+
+        save_report(stats, report_path, report_template)
 
     finally:
         source.close()
@@ -158,11 +166,10 @@ def process_log(config: dict, log: Log):
 
 def configure(config_path, config):
     config_parser = configparser.ConfigParser()
-    try:
-        config_parser.read(config_path)
-    except Exception as e:
-        print(f"Configuration file read error: {e}")
-        exit(1)
+    config_parser.read(config_path)
+    # except Exception as e:
+    #     print(f"Configuration file read error: {e}")
+    #     exit(1)
 
     # update configuration from config file
     if 'config' in config_parser:
@@ -210,17 +217,27 @@ def main():
     try:
         configure(config_path, config)
     except Exception as e:
-        print(f"Error {e} in file {config_path}")
+        print(f"Errors in file {config_path}\n{e}")
+        exit(1)
+
+    # check if report template exists
+    template_path = path.join(path.dirname(__file__), 'report.html')
+    if not path.isfile(template_path):
+        print(f"Template file {template_path} not found")
         exit(1)
 
     # log processing
     try:
         logging.info(f'Start log analyzer')
-        log = get_log(config)
+
+        with open(template_path, mode='r', encoding='windows-1251') as rt:
+            report_template = rt.read()
+
+        log = get_log(config["LOG_DIR"])
         logging.debug(f'log = {log}')
 
         if log is not None:
-            process_log(config, log)
+            process_log(config, log, report_template)
         else:
             logging.info(f'No logs found')
 
