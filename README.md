@@ -70,3 +70,9 @@ python test_log_analyzer.py -v
 ```bash
 python poker.py
 ```
+
+2. Run deco script with following command
+
+```bash
+python deco.py
+```
