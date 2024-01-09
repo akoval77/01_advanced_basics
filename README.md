@@ -62,3 +62,11 @@ to get verbose output use -v option
 ```bash
 python test_log_analyzer.py -v 
 ```
+
+## Optional tasks
+
+1. Run poker script with following command
+
+```bash
+python poker.py
+```
