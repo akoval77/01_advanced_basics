@@ -128,15 +128,15 @@ def fib(n):
 
 
 def main():
-    # print(foo(4, 3))
-    # print(foo(4, 3, 2))
-    # print(foo(4, 3))
-    # print("foo was called", foo.calls, "times")
-    #
-    # print(bar(4, 3))
-    # print(bar(4, 3, 2))
-    # print(bar(4, 3, 2, 1))
-    # print("bar was called", bar.calls, "times")
+    print(foo(4, 3))
+    print(foo(4, 3, 2))
+    print(foo(4, 3))
+    print("foo was called", foo.calls, "times")
+
+    print(bar(4, 3))
+    print(bar(4, 3, 2))
+    print(bar(4, 3, 2, 1))
+    print("bar was called", bar.calls, "times")
 
     print(fib.__doc__)
     fib(3)
