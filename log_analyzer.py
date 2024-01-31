@@ -28,6 +28,11 @@ config = {
 Log = namedtuple('Log', 'name date ext')
 
 
+class ParseError(Exception):
+    """Raised when parse error limit exceeded or some exception occurs while reading log file"""
+    pass
+
+
 def to_date(s: str) -> datetime:
     try:
         return datetime.strptime(s, "%Y%m%d")
@@ -61,26 +66,34 @@ def parse_log(source, error_limit):
     parsed_cnt = 0
     error_cnt = 0
 
-    for line in source:
-        total_cnt += 1
+    try:
+        for line in source:
+            total_cnt += 1
 
-        if m := log_format.match(line):
-            parsed_cnt += 1
-            yield m.groupdict()
-        else:
-            error_cnt += 1
-            if error_cnt < 10:
-                logging.debug(line.rstrip('\r\n'))
+            if m := log_format.match(line):
+                parsed_cnt += 1
+                yield m.groupdict()
+            else:
+                error_cnt += 1
+                if error_cnt < 10:
+                    logging.debug(line.rstrip('\r\n'))
+
+    except (IOError, MemoryError) as e:
+        logging.exception(e)
+        raise ParseError(f'System error occurred: {e}, line = {total_cnt}')
 
     logging.debug(f"total_cnt: {total_cnt}")
     logging.debug(f"parsed_cnt: {parsed_cnt}")
     logging.debug(f"error_cnt: {error_cnt}")
 
     if error_cnt > 0 and (pcnt := error_cnt / total_cnt) > error_limit:
-        raise Exception(f"Too many parse errors. Error percent: {pcnt}")
+        raise ParseError(f"Too many parse errors. Error percent: {pcnt}")
 
 
-def save_report(url_stats, report_path, report_template):
+def save_report(url_stats, report_path, template_path):
+    with open(template_path, mode='r', encoding='windows-1251') as rt:
+        report_template = rt.read()
+
     template = Template(report_template)
     with open(report_path, mode='w', encoding='windows-1251') as report:
         report.write(template.safe_substitute(table_json=json.dumps(url_stats)))
@@ -125,15 +138,16 @@ def render_report(parsed, report_size):
         url_stat["time_perc"] = round((url_stat["time_sum"]/total_time)*100, 3)
         url_stat["count_perc"] = round((url_stat["count"]/total_count)*100, 3)
 
-    # write top 10 items of url_stats to log
-    logging.debug("Top 10 urls:")
-    for i in range(10):
+    # write top n items of url_stats to log
+    top_n = 10
+    logging.debug(f"Top {top_n} urls:")
+    for i in range(top_n):
         logging.debug(f"{url_stats[i]}")
 
     return url_stats
 
 
-def process_log(config: dict, log: Log, report_template: str):
+def process_log(config: dict, log: Log, template_path: str):
     report_name = "report-" + datetime.strftime(log.date, "%Y.%m.%d") + ".html"
     report_dir = config["REPORT_DIR"]
     logging.info(f"Start processing log {log.name}")
@@ -158,7 +172,7 @@ def process_log(config: dict, log: Log, report_template: str):
 
         stats = render_report(parsed, config["REPORT_SIZE"])
 
-        save_report(stats, report_path, report_template)
+        save_report(stats, report_path, template_path)
 
     finally:
         source.close()
@@ -167,9 +181,6 @@ def process_log(config: dict, log: Log, report_template: str):
 def configure(config_path, config):
     config_parser = configparser.ConfigParser()
     config_parser.read(config_path)
-    # except Exception as e:
-    #     print(f"Configuration file read error: {e}")
-    #     exit(1)
 
     # update configuration from config file
     if 'config' in config_parser:
@@ -230,14 +241,11 @@ def main():
     try:
         logging.info(f'Start log analyzer')
 
-        with open(template_path, mode='r', encoding='windows-1251') as rt:
-            report_template = rt.read()
-
         log = get_log(config["LOG_DIR"])
         logging.debug(f'log = {log}')
 
         if log is not None:
-            process_log(config, log, report_template)
+            process_log(config, log, template_path)
         else:
             logging.info(f'No logs found')
 
