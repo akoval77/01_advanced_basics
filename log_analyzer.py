@@ -41,7 +41,7 @@ def get_log(log_dir) -> Log:
         return None
 
     files = (
-        Log(name=f, date=dt, ext=m.groupdict()["ext"]) for f in listdir(log_dir)
+        Log(name=f, date=dt, ext=m.groupdict()["ext"]) for f in sorted(listdir(log_dir))
         if (m := re.match(r'nginx-access-ui.log-(?P<logdate>[0-9]{8})(?P<ext>\.gz)?', f))
            and (dt := to_date(m.groupdict()['logdate'])) is not None
     )
